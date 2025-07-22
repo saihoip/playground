@@ -1,0 +1,5 @@
+.chainlit
+.env
+images/*.png
+__pycache__
+.DS_Store
