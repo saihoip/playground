@@ -107,48 +107,79 @@ Title: <Concise title of the plan>
 
 def route_next_step(
     state: AgentState,
-) -> Literal["web_scraper", "coder", "reporter", "end", "planner"]:
-    print("---ROUTER---")
+) -> Literal["web_scraper", "coder", "reporter", "planner", "end"]:
+    print("---ROUTER (LLM Classifier)---")
     if not state["workflow_needed"]:
-        return "end"  # If it was a general question, we end here.
+        return "end"
 
     todo_lines = state["plan"].strip().splitlines()
-
-    # Find the first unchecked item in the todo list
     for step in todo_lines:
-
-        step_lower = step.replace("- [ ] ", "").lower().strip()
-        print(f"Evaluating step: {step_lower}")
         if "- [ ]" in step:
-            # Based on keywords, decide which agent should handle it
-            if (
-                step_lower.startswith("web")
-                or step_lower.startswith("research")
-                or step_lower.startswith("collect")
-                or step_lower.startswith("gather")
-                or step_lower.startswith("find")
-            ):
-                print(f"Next step: Web Scraper for: {step}")
-                return "web_scraper"
-            elif (
-                step_lower.startswith("code")
-                or step_lower.startswith("develop")
-                or step_lower.startswith("implement")
-                or step_lower.startswith("execute")
-            ):
-                print(f"Next step: Coder for: {step}")
-                return "coder"
-            elif step_lower.startswith("summarize") or step_lower.startswith("report"):
-                print(f"Next step: Reporter for: {step}")
-                return "reporter"
-            else:
-                # If no specific agent is identified, the Planner might need to refine or a default agent could handle it
-                print(f"Next step: Planner to refine or handle: {step}")
+            current_task_description = step.replace("- [ ] ", "").strip()
 
-                # For simplicity, if not clearly a web or code task, we'll try to let the Planner refine or guide.
-                # In a real scenario, you might have a "generic_task_handler" or more sophisticated routing.
-                return "planner"  # Re-route to planner to clarify or break down further
-    return "end"  # Should not be reached if logic is sound, but as a fallback.
+            # LLM call to classify the task
+            classification_prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        """
+You are a task classifier. Your job is to assign a single category to each task description based on its primary intent. The available categories are:
+
+- web_scraping – For tasks that involve gathering or researching information from online sources.
+- coding – For tasks that involve writing, modifying, or executing code.
+- reporting – For tasks that involve summarizing findings, generating reports, or explaining results.
+
+Instructions:
+
+Given a task description, respond with only the most appropriate category name from the list above.
+
+Examples:
+
+- [ ] Gather information about the origins and initial development of Node.js
+web_scraping
+
+- [ ] Collect details about key milestones and version releases of Node.js
+web_scraping
+
+- [ ] Find information about the creators and major contributors to Node.js
+web_scraping
+
+- [ ] Research the impact and adoption trends of Node.js over time
+web_scraping
+
+- [ ] Summarize the gathered information into a coherent historical overview
+reporting
+""",
+                    ),
+                    ("user", "{task_description}"),
+                ]
+            )
+            classifier_chain = classification_prompt | llm
+            category = (
+                classifier_chain.invoke({"task_description": current_task_description})
+                .content.strip()
+                .lower()
+            )
+
+            print(f"Task '{current_task_description}' classified as: {category}")
+
+            if "web_scraping" in category:
+                return "web_scraper"
+            elif "coding" in category:
+                return "coder"
+            elif "reporting" in category:
+                return "reporter"
+            elif (
+                "planning_refinement" in category
+            ):  # For tasks not directly actionable by agents
+                return "planner"
+            else:
+                print(
+                    f"Warning: Unknown category '{category}'. Routing to planner for refinement."
+                )
+                return "planner"  # Fallback to planner if classification is unclear
+
+    return "end"
 
 
 def web_scraper(state: AgentState) -> AgentState:
